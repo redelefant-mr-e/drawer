@@ -1,21 +1,36 @@
 // At the start of your file, update the canvas setup
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', {
+    alpha: true,
+    antialias: true,
+    desynchronized: true
+});
 
-// Set fixed dimensions
-const CANVAS_SIZE = 2000;
+// Enable image smoothing for better quality
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
+
+// Set fixed dimensions with higher resolution
+const CANVAS_SIZE = 2400;  // Increased from 2000
 canvas.width = CANVAS_SIZE;
 canvas.height = CANVAS_SIZE;
 
 // Scale canvas to fit window while maintaining aspect ratio
 function fitCanvasToWindow() {
-    const padding = 80; // Account for top and bottom padding
+    const padding = 80;
     const scale = Math.min(
         (window.innerWidth) / canvas.width,
         (window.innerHeight - padding) / canvas.height
     );
+    
+    // Use transform instead of CSS scaling for better quality
     canvas.style.width = `${canvas.width * scale}px`;
     canvas.style.height = `${canvas.height * scale}px`;
+    
+    // Apply device pixel ratio for retina displays
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.transform = `scale(${1/dpr})`;
+    canvas.style.transformOrigin = '0 0';
 }
 
 let isFastMode = false;
@@ -66,8 +81,8 @@ const globalLight = {
     x: -1,  // Light direction vector
     y: -1,
     z: -2,
-    intensity: 1.2,
-    ambient: 0.3  // Ambient light level
+    intensity: 1.4,  // Increased from 1.2
+    ambient: 0.4     // Increased from 0.3
 };
 
 // Normalize light direction
@@ -112,10 +127,25 @@ class Dot {
         this.direction = Math.random() * Math.PI * 2;
         
         // Line properties with dynamic sizing
-        this.minWidth = 0.5;
-        this.maxWidth = 14;
+        this.minWidth = 0.3;  // Reduced from 0.5 for finer details
+        this.maxWidth = 10;   // Reduced from 14 for more consistent lines
         this.lineWidth = this.minWidth;
         this.targetLineWidth = this.lineWidth;
+        
+        // Add line smoothing properties
+        this.positionHistory = [];
+        this.maxHistoryLength = 3;
+        this.smoothingFactor = 0.65;
+        
+        // Movement interpolation
+        this.interpolationSteps = 4;
+        this.currentInterpolationStep = 0;
+        
+        // Enhanced depth control
+        this.depthScale = {
+            min: 0.4,
+            max: 1.2
+        };
         
         // Color schemes based on shape types
         this.colorSchemes = {
@@ -123,31 +153,31 @@ class Dot {
                 hue: 200,        // Blue base
                 hueRange: 40,    // Variation in hue
                 saturation: 70,  // Vibrant but not too intense
-                lightness: 50    // Medium brightness
+                lightness: 60    // Increased from 50
             },
             [shapeTypes.TORUS]: {
                 hue: 280,        // Purple base
                 hueRange: 30,    // Smaller variation
                 saturation: 60,
-                lightness: 45
+                lightness: 55    // Increased from 45
             },
             [shapeTypes.SPIRAL]: {
                 hue: 120,        // Green base
                 hueRange: 40,
                 saturation: 65,
-                lightness: 40
+                lightness: 50    // Increased from 40
             },
             [shapeTypes.WAVE]: {
                 hue: 180,        // Cyan base
                 hueRange: 30,
                 saturation: 75,
-                lightness: 55
+                lightness: 65    // Increased from 55
             },
             [shapeTypes.CROSS]: {
                 hue: 340,        // Red/Pink base
                 hueRange: 20,    // Tighter color range
                 saturation: 80,  // More saturated
-                lightness: 50
+                lightness: 60    // Increased from 50
             }
         };
         
@@ -156,7 +186,7 @@ class Dot {
         this.hue = scheme.hue + (Math.random() - 0.5) * scheme.hueRange;
         this.saturation = scheme.saturation + (Math.random() - 0.5) * 20;
         this.lightness = scheme.lightness + (Math.random() - 0.5) * 15;
-        this.opacity = Math.random() * 0.5 + 0.3;
+        this.opacity = Math.random() * 0.6 + 0.4;  // Increased base opacity
         this.targetHue = this.hue;
         this.targetOpacity = this.opacity;
         
@@ -205,18 +235,40 @@ class Dot {
         this.lastX = this.x;
         this.lastY = this.y;
         
-        // Smoother transition
-        const transitionSpeed = 0.1;
-        this.x += (pos.x - this.x) * transitionSpeed;
-        this.y += (pos.y - this.y) * transitionSpeed;
+        // Position smoothing with history
+        this.positionHistory.push({ x: pos.x, y: pos.y });
+        if (this.positionHistory.length > this.maxHistoryLength) {
+            this.positionHistory.shift();
+        }
         
-        // More dramatic depth effect
-        this.currentDepth = pos.depth;
+        // Calculate smoothed position
+        let smoothX = 0;
+        let smoothY = 0;
+        this.positionHistory.forEach((pos, i) => {
+            const weight = Math.pow(this.smoothingFactor, this.maxHistoryLength - i - 1);
+            smoothX += pos.x * weight;
+            smoothY += pos.y * weight;
+        });
+        
+        const totalWeight = (1 - Math.pow(this.smoothingFactor, this.maxHistoryLength)) / (1 - this.smoothingFactor);
+        smoothX /= totalWeight;
+        smoothY /= totalWeight;
+        
+        // Smoother transition with interpolation
+        const transitionSpeed = 0.15;  // Increased from 0.1
+        this.x += (smoothX - this.x) * transitionSpeed;
+        this.y += (smoothY - this.y) * transitionSpeed;
+        
+        // Enhanced depth effect
+        this.currentDepth = Math.max(this.depthScale.min, 
+                                   Math.min(this.depthScale.max, pos.depth));
         this.currentLighting = pos.lighting;
         
-        // Adjust line width more dramatically based on depth
-        this.lineWidth = this.minWidth + (this.maxWidth - this.minWidth) * this.currentDepth;
-        this.opacity = 0.2 + this.currentDepth * 0.8;
+        // Adjust line width more subtly based on depth
+        const depthInfluence = (this.currentDepth - this.depthScale.min) / 
+                              (this.depthScale.max - this.depthScale.min);
+        this.lineWidth = this.minWidth + 
+                        (this.maxWidth - this.minWidth) * depthInfluence;
     }
 
     update() {
@@ -288,19 +340,36 @@ class Dot {
 
     drawSegment() {
         ctx.beginPath();
-        ctx.moveTo(this.lastX, this.lastY);
-        ctx.lineTo(this.x, this.y);
         
-        // Modify line width based on depth
-        const depthWidth = this.lineWidth * (1 + (this.currentDepth || 0.5));
+        // Use quadratic curves for smoother lines
+        if (this.positionHistory.length >= 2) {
+            const prevPos = this.positionHistory[this.positionHistory.length - 2];
+            const currentPos = this.positionHistory[this.positionHistory.length - 1];
+            
+            // Control point for quadratic curve
+            const cpX = (prevPos.x + currentPos.x) / 2;
+            const cpY = (prevPos.y + currentPos.y) / 2;
+            
+            ctx.moveTo(this.lastX, this.lastY);
+            ctx.quadraticCurveTo(cpX, cpY, this.x, this.y);
+        } else {
+            ctx.moveTo(this.lastX, this.lastY);
+            ctx.lineTo(this.x, this.y);
+        }
         
-        // Modify opacity based on depth and lighting
-        const depthOpacity = this.opacity * (0.5 + (this.currentDepth || 0.5));
-        const adjustedLightness = this.lightness * (this.currentLighting || 1);
+        // Fine-tuned depth and lighting calculations
+        const depthWidth = this.lineWidth * (0.8 + (this.currentDepth || 0.5));
+        const depthOpacity = this.opacity * (0.6 + (this.currentDepth || 0.5));
+        const adjustedLightness = this.lightness * (this.currentLighting || 1.2);
         
         ctx.strokeStyle = `hsla(${this.hue}, ${this.saturation}%, ${adjustedLightness}%, ${depthOpacity})`;
         ctx.lineWidth = depthWidth;
-        ctx.lineCap = this.lineCap || 'round';
+        ctx.lineCap = 'round';  // Always use round for smoother lines
+        
+        // Enable line join for smoother corners
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 1;
+        
         ctx.stroke();
     }
 }
@@ -591,14 +660,180 @@ penStyleButton.addEventListener('click', () => {
 document.body.appendChild(shapeButton);
 document.body.appendChild(penStyleButton);
 
-// Add resize listener to maintain positioning
+// Add randomize all functionality
+let isRandomizeAllActive = false;
+let randomizeInterval;
+
+const randomizeAllButton = document.createElement('button');
+randomizeAllButton.textContent = 'Randomize All: OFF';
+Object.assign(randomizeAllButton.style, {
+    ...buttonStyle,
+    left: `${VIEWPORT_PADDING}px`,
+    top: `${VIEWPORT_PADDING + 170}px`  // Position below other buttons
+});
+
+// Function to trigger random changes
+function triggerRandomChanges() {
+    if (Math.random() < 0.5) {  // 50% chance to switch shape
+        shapeButton.click();
+    }
+    if (Math.random() < 0.5) {  // 50% chance to randomize pens
+        penStyleButton.click();
+    }
+}
+
+// Add click handler for the randomize all button
+randomizeAllButton.addEventListener('click', () => {
+    isRandomizeAllActive = !isRandomizeAllActive;
+    randomizeAllButton.textContent = `Randomize All: ${isRandomizeAllActive ? 'ON' : 'OFF'}`;
+    
+    if (isRandomizeAllActive) {
+        // Initial trigger
+        triggerRandomChanges();
+        
+        // Set up random interval changes
+        function scheduleNextChange() {
+            const minDelay = 2000;  // Minimum 2 seconds
+            const maxDelay = 8000;  // Maximum 8 seconds
+            const delay = Math.random() * (maxDelay - minDelay) + minDelay;
+            
+            randomizeInterval = setTimeout(() => {
+                if (isRandomizeAllActive) {
+                    triggerRandomChanges();
+                    scheduleNextChange();  // Schedule next change
+                }
+            }, delay);
+        }
+        
+        scheduleNextChange();
+    } else {
+        // Clear the interval when turned off
+        clearTimeout(randomizeInterval);
+    }
+});
+
+// Add hover effects to the new button
+randomizeAllButton.addEventListener('mouseover', () => {
+    Object.assign(randomizeAllButton.style, {
+        background: 'white',
+        color: 'black'
+    });
+});
+
+randomizeAllButton.addEventListener('mouseout', () => {
+    Object.assign(randomizeAllButton.style, {
+        background: 'black',
+        color: 'white'
+    });
+});
+
+// Make sure to append the new button to the document
+document.body.appendChild(randomizeAllButton);
+
+// Update hover effects array to include all buttons
+[shapeButton, penStyleButton, randomizeAllButton].forEach(button => {
+    button.addEventListener('mouseover', () => {
+        Object.assign(button.style, {
+            background: 'white',
+            color: 'black'
+        });
+    });
+    
+    button.addEventListener('mouseout', () => {
+        Object.assign(button.style, {
+            background: 'black',
+            color: 'white'
+        });
+    });
+});
+
+// Add download button
+const downloadButton = document.createElement('button');
+downloadButton.textContent = 'Download as JPG';
+Object.assign(downloadButton.style, {
+    ...buttonStyle,
+    left: `${VIEWPORT_PADDING}px`,
+    top: `${VIEWPORT_PADDING + 230}px`  // Position below randomize all button
+});
+
+// Function to handle download
+function downloadCanvasAsJPG() {
+    // Temporarily hide UI elements
+    const uiElements = [title, shapeButton, penStyleButton, randomizeAllButton, downloadButton, copyright];
+    uiElements.forEach(el => el.style.display = 'none');
+    
+    // Create a temporary canvas with the same dimensions
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // Copy the main canvas content
+    tempCtx.drawImage(canvas, 0, 0);
+    
+    // Create download link
+    const link = document.createElement('a');
+    link.download = `drawer-${Date.now()}.jpg`;
+    link.href = tempCanvas.toDataURL('image/jpeg', 0.9);
+    link.click();
+    
+    // Show UI elements again
+    uiElements.forEach(el => el.style.display = 'block');
+}
+
+// Add click handler for download button
+downloadButton.addEventListener('click', downloadCanvasAsJPG);
+
+// Add hover effects to download button
+downloadButton.addEventListener('mouseover', () => {
+    Object.assign(downloadButton.style, {
+        background: 'white',
+        color: 'black'
+    });
+});
+
+downloadButton.addEventListener('mouseout', () => {
+    Object.assign(downloadButton.style, {
+        background: 'black',
+        color: 'white'
+    });
+});
+
+// Append download button to document
+document.body.appendChild(downloadButton);
+
+// Update hover effects array to include download button
+[shapeButton, penStyleButton, randomizeAllButton, downloadButton].forEach(button => {
+    button.addEventListener('mouseover', () => {
+        Object.assign(button.style, {
+            background: 'white',
+            color: 'black'
+        });
+    });
+    
+    button.addEventListener('mouseout', () => {
+        Object.assign(button.style, {
+            background: 'black',
+            color: 'white'
+        });
+    });
+});
+
+// Update resize event listener to include download button
 window.addEventListener('resize', () => {
     VIEWPORT_PADDING = window.innerWidth < 480 ? 15 : 
                       window.innerWidth < 768 ? 20 : 30;
     
     title.style.left = `${VIEWPORT_PADDING}px`;
+    title.style.top = `${VIEWPORT_PADDING}px`;
     shapeButton.style.left = `${VIEWPORT_PADDING}px`;
+    shapeButton.style.top = `${VIEWPORT_PADDING + 50}px`;
     penStyleButton.style.left = `${VIEWPORT_PADDING}px`;
+    penStyleButton.style.top = `${VIEWPORT_PADDING + 110}px`;
+    randomizeAllButton.style.left = `${VIEWPORT_PADDING}px`;
+    randomizeAllButton.style.top = `${VIEWPORT_PADDING + 170}px`;
+    downloadButton.style.left = `${VIEWPORT_PADDING}px`;
+    downloadButton.style.top = `${VIEWPORT_PADDING + 230}px`;
 
     if (window.innerWidth < 768) {  // Mobile breakpoint
         copyright.style.right = 'auto';
